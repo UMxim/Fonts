@@ -9,10 +9,10 @@ class FontGeneratorMenu:
         self.selected_font = None
         self.settings = {
             'height': 8,
-            'symbol_set': 3,  # 1-цифры, 2-латиница, 3-кириллица, 4-свой выбор
-            'custom_symbols': ''
+            'symbol_set': []
         }
         self.setup_fonts_directory()
+        self.glyphs = []
 
     def setup_fonts_directory(self):
         """Создает директорию fonts если её нет"""
@@ -167,9 +167,6 @@ class FontGeneratorMenu:
             print("=" * 40)
             print(f"1. Высота шрифта: {self.settings['height']}px")
             print(f"2. Набор символов: {symbol_set_names[self.settings['symbol_set']]}")
-            if self.settings['symbol_set'] == 4:
-                print(
-                    f"   Текущий набор: {self.settings['custom_symbols'] if self.settings['custom_symbols'] else '(не задан)'}")
             print("3. Назад")
             print("-" * 40)
 
@@ -207,7 +204,7 @@ class FontGeneratorMenu:
                 self.settings['symbol_set'] = choice
                 if choice == 4:
                     symbols = input("Введите свой набор символов: ").strip()
-                    self.settings['custom_symbols'] = symbols
+                    self.settings['symbol_set'] = symbols
             else:
                 print("Неверный выбор!")
         except ValueError:
@@ -248,23 +245,25 @@ class FontGeneratorMenu:
 
         i = start_index
         in_bitmap = False
-        bitmap_rows = []
 
         while i < len(lines):
             line = lines[i].strip()
 
             if line.startswith('ENCODING '):
                 glyph['encoding'] = int(line.split()[1])
+
             elif line.startswith('BBX '):
                 parts = line.split()
                 glyph['width'] = int(parts[1])
                 glyph['height'] = int(parts[2])
+
             elif line == 'BITMAP':
                 in_bitmap = True
-                bitmap_rows = []
+
             elif line == 'ENDCHAR':
                 if in_bitmap and glyph['encoding'] != -1:
-                    # Преобразуем hex строки в битовый массив
+                    # Преобразуем hex строки в битовый массив Пока нет.
+                    return glyph, i + 1
                     bitmap = []
                     for hex_row in bitmap_rows:
                         if hex_row:
@@ -295,7 +294,7 @@ class FontGeneratorMenu:
                     return glyph, i + 1
                 break
             elif in_bitmap:
-                bitmap_rows.append(line)
+                glyph['bitmap'].append(line)
 
             i += 1
 
@@ -306,8 +305,6 @@ class FontGeneratorMenu:
         try:
             with open(bdf_path, 'r', encoding='utf-8', errors='ignore') as f:
                 lines = f.readlines()
-
-            font_data = {}
 
             # Ищем высоту шрифта
             font_height = 16  # значение по умолчанию
@@ -323,17 +320,13 @@ class FontGeneratorMenu:
                 if line.startswith('STARTCHAR'):
                     glyph, next_i = self.parse_bdf_glyph(lines, i)
                     if glyph and glyph['encoding'] != -1:
-                        font_data[glyph['encoding']] = {
-                            'bitmap': glyph['bitmap'],
-                            'width': glyph['width'],
-                            'height': len(glyph['bitmap']),
-                            'char': chr(glyph['encoding']) if glyph['encoding'] < 128 else f'\\u{glyph["encoding"]:04x}'
-                        }
+
+                        self.glyphs.append(glyph)
                     i = next_i
                 else:
                     i += 1
 
-            return font_data, font_height
+            return self.glyphs, font_height
 
         except Exception as e:
             print(f"Ошибка при парсинге BDF файла: {e}")
@@ -373,18 +366,18 @@ class FontGeneratorMenu:
 
         return bitmap, width, height
 
-    def get_symbol_list(self):
+    def get_symbol_list(self, pos):
         """Возвращает список символов в зависимости от настроек"""
-        if self.settings['symbol_set'] == 1:
+        if pos == 1:
             # Только цифры
             return [chr(i) for i in range(ord('0'), ord('9') + 1)]
-        elif self.settings['symbol_set'] == 2:
+        elif pos == 2:
             # Цифры и английские буквы
             digits = [chr(i) for i in range(ord('0'), ord('9') + 1)]
             uppercase = [chr(i) for i in range(ord('A'), ord('Z') + 1)]
             lowercase = [chr(i) for i in range(ord('a'), ord('z') + 1)]
             return digits + uppercase + lowercase
-        elif self.settings['symbol_set'] == 3:
+        elif pos == 3:
             # Все символы (латиница + кириллица)
             digits = [chr(i) for i in range(ord('0'), ord('9') + 1)]
             uppercase = [chr(i) for i in range(ord('A'), ord('Z') + 1)]
@@ -393,7 +386,7 @@ class FontGeneratorMenu:
             cyrillic_lower = [chr(i) for i in range(ord('а'), ord('я') + 1)]
             additional = ['Ё', 'ё']
             return digits + uppercase + lowercase + cyrillic_upper + cyrillic_lower + additional
-        elif self.settings['symbol_set'] == 4:
+        elif pos == 4:
             # Свой выбор
             return list(self.settings['custom_symbols'])
         return []
