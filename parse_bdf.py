@@ -3,6 +3,113 @@ import sys
 from PIL import Image, ImageDraw, ImageFont
 
 
+class BDFParser:
+    def __init__(self, font_path, symbol_list):
+        self.font_path = font_path
+        self.symbol_list = symbol_list
+        # Преобразуем символы в CP1251 коды для фильтрации
+        self.symbol_cp1251_codes = set()
+        for c in symbol_list:
+            try:
+                cp1251_bytes = c.encode('windows-1251')
+                cp1251_code = cp1251_bytes[0]
+                self.symbol_cp1251_codes.add(cp1251_code)
+            except UnicodeEncodeError:
+                # Если символ не кодируется в CP1251, пропускаем
+                pass
+        self.glyphs = []
+        self.font_height = 0
+        self.font_width = 0
+
+    def unicode_to_cp1251(self, unicode_code):
+        """Преобразует Unicode код в CP1251 код"""
+        try:
+            char = chr(unicode_code)
+            cp1251_bytes = char.encode('windows-1251')
+            return cp1251_bytes[0]
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            return None
+
+    def parse_glyph(self, lines, start_index):
+        """Парсит один глиф из BDF файла"""
+        glyph = {
+            'encoding': -1,  # Unicode код
+            'cp1251_code': -1,  # CP1251 код
+            'width': 0,
+            'height': 0,
+            'bitmap': []  # hex строки данных
+        }
+
+        i = start_index
+        in_bitmap = False
+
+        while i < len(lines):
+            line = lines[i].strip()
+
+            if line.startswith('ENCODING '):
+                unicode_code = int(line.split()[1])
+                glyph['encoding'] = unicode_code
+                # Преобразуем в CP1251
+                cp1251_code = self.unicode_to_cp1251(unicode_code)
+                if cp1251_code is not None:
+                    glyph['cp1251_code'] = cp1251_code
+
+            elif line.startswith('BBX '):
+                parts = line.split()
+                glyph['width'] = int(parts[1])
+                glyph['height'] = int(parts[2])
+
+            elif line == 'BITMAP':
+                in_bitmap = True
+                glyph['bitmap'] = []
+
+            elif line == 'ENDCHAR':
+                if in_bitmap and glyph['encoding'] != -1:
+                    return glyph, i + 1
+                break
+            elif in_bitmap:
+                glyph['bitmap'].append(line)
+
+            i += 1
+
+        return None, i + 1
+
+    def parse_font(self):
+        """Парсит BDF файл и возвращает массив глифов для нужных символов"""
+        try:
+            with open(self.font_path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()
+
+            # Ищем размеры шрифта
+            for line in lines:
+                if line.startswith('FONTBOUNDINGBOX '):
+                    parts = line.split()
+                    self.font_width = int(parts[1])
+                    self.font_height = int(parts[2])
+                    break
+
+            # Парсим глифы
+            i = 0
+            while i < len(lines):
+                line = lines[i].strip()
+                if line.startswith('STARTCHAR'):
+                    glyph, next_i = self.parse_glyph(lines, i)
+                    if glyph and glyph['encoding'] != -1 and glyph['cp1251_code'] != -1:
+                        # Фильтруем по CP1251 кодам
+                        if (not self.symbol_cp1251_codes or
+                                glyph['cp1251_code'] in self.symbol_cp1251_codes):
+                            self.glyphs.append(glyph)
+                    i = next_i
+                else:
+                    i += 1
+
+            return self.glyphs, self.font_height, self.font_width
+
+        except Exception as e:
+            print(f"Ошибка при парсинге BDF файла: {e}")
+            return [], 0, 0
+
+
 class FontGeneratorMenu:
     def __init__(self):
         self.fonts_dir = "fonts"
@@ -12,12 +119,9 @@ class FontGeneratorMenu:
             'symbol_set': 1,  # по умолчанию только цифры
             'custom_symbols': ""  # для пользовательского набора
         }
-        self.setup_fonts_directory()
-
-    def setup_fonts_directory(self):
-        """Создает директорию fonts если её нет"""
         if not os.path.exists(self.fonts_dir):
             os.makedirs(self.fonts_dir)
+
 
     def scan_fonts_directory(self, directory=None):
         """Сканирует директорию на наличие BDF шрифтов и папок"""
@@ -201,9 +305,11 @@ class FontGeneratorMenu:
             choice = int(input("Выберите вариант (1-4): ").strip())
             if 1 <= choice <= 4:
                 if choice == 4:
-                    symbols = input("Введите свой набор символов: ").strip()
+                    symbols = input("Введите свой набор символов: ")
+                    symbols = symbols.strip()  # Убираем только ведущие/завершающие пробелы
                     self.settings['symbol_set'] = symbols
                     self.settings['custom_symbols'] = symbols
+                    print(f"Выбран набор: '{symbols}' (длина: {len(symbols)})")  # Для отладки
                 else:
                     self.settings['symbol_set'] = choice
                     self.settings['custom_symbols'] = ""
@@ -247,16 +353,13 @@ class FontGeneratorMenu:
         if isinstance(self.settings['symbol_set'], int):
             pos = self.settings['symbol_set']
             if pos == 1:
-                # Только цифры
                 return [chr(i) for i in range(ord('0'), ord('9') + 1)]
             elif pos == 2:
-                # Цифры и английские буквы
                 digits = [chr(i) for i in range(ord('0'), ord('9') + 1)]
                 uppercase = [chr(i) for i in range(ord('A'), ord('Z') + 1)]
                 lowercase = [chr(i) for i in range(ord('a'), ord('z') + 1)]
                 return digits + uppercase + lowercase
             elif pos == 3:
-                # Все символы (латиница + кириллица)
                 digits = [chr(i) for i in range(ord('0'), ord('9') + 1)]
                 uppercase = [chr(i) for i in range(ord('A'), ord('Z') + 1)]
                 lowercase = [chr(i) for i in range(ord('a'), ord('z') + 1)]
@@ -265,147 +368,22 @@ class FontGeneratorMenu:
                 additional = ['Ё', 'ё']
                 return digits + uppercase + lowercase + cyrillic_upper + cyrillic_lower + additional
             elif pos == 4:
-                # Свой выбор из custom_symbols
                 return list(self.settings['custom_symbols']) if self.settings['custom_symbols'] else []
         else:
-            # Пользовательский набор (строка)
+            # Пользовательский набор
             return list(self.settings['symbol_set']) if self.settings['symbol_set'] else []
         return []
 
-    def parse_bdf_glyph(self, lines, start_index):
-        """Парсит один глиф из BDF файла"""
-        glyph = {
-            'encoding': -1,
-            'width': 0,
-            'height': 0,
-            'bitmap': []
-        }
-
-        i = start_index
-        bitmap_rows = []
-        in_bitmap = False
-
-        while i < len(lines):
-            line = lines[i].strip()
-
-            if line.startswith('ENCODING '):
-                glyph['encoding'] = int(line.split()[1])
-
-            elif line.startswith('BBX '):
-                parts = line.split()
-                glyph['width'] = int(parts[1])
-                glyph['height'] = int(parts[2])
-
-            elif line == 'BITMAP':
-                in_bitmap = True
-                bitmap_rows = []
-
-            elif line == 'ENDCHAR':
-                if in_bitmap and glyph['encoding'] != -1:
-                    # Преобразуем hex строки в битовый массив
-                    bitmap = []
-                    for hex_row in bitmap_rows:
-                        if hex_row:
-                            # Убираем возможные пробелы
-                            hex_row = hex_row.strip()
-                            if hex_row:
-                                try:
-                                    hex_val = int(hex_row, 16)
-                                    row_bits = []
-                                    # Обрабатываем биты справа налево (младший бит = правый пиксель)
-                                    for bit_pos in range(glyph['width']):
-                                        bit_val = (hex_val >> (glyph['width'] - 1 - bit_pos)) & 1
-                                        row_bits.append(bit_val)
-                                    bitmap.append(row_bits)
-                                except ValueError:
-                                    # Если не удалось преобразовать, добавляем пустую строку
-                                    bitmap.append([0] * glyph['width'])
-
-                    # Преобразуем в байты
-                    bitmap_bytes = []
-                    for row in bitmap:
-                        byte_row = []
-                        for j in range(0, len(row), 8):
-                            byte_val = 0
-                            for k in range(min(8, len(row) - j)):
-                                if row[j + k]:
-                                    byte_val |= (1 << (7 - k))  # старший бит = левый пиксель
-                            byte_row.append(byte_val)
-                        bitmap_bytes.append(byte_row)
-
-                    glyph['bitmap'] = bitmap_bytes
-                    return glyph, i + 1
-                break
-            elif in_bitmap:
-                bitmap_rows.append(line)
-
-            i += 1
-
-        return None, i + 1
-
-    def parse_bdf_font(self, bdf_path):
-        """Парсит BDF файл и возвращает данные шрифта"""
-        try:
-            with open(bdf_path, 'r', encoding='utf-8', errors='ignore') as f:
-                lines = f.readlines()
-
-            # Ищем высоту шрифта
-            font_height = 16  # значение по умолчанию
-
-            for line in lines:
-                if line.startswith('FONTBOUNDINGBOX '):
-                    parts = line.split()
-                    font_height = int(parts[2])
-
-            glyphs = {}
-            i = 0
-            while i < len(lines):
-                line = lines[i].strip()
-                if line.startswith('STARTCHAR'):
-                    glyph, next_i = self.parse_bdf_glyph(lines, i)
-                    if glyph and glyph['encoding'] != -1:
-                        glyphs[glyph['encoding']] = glyph
-                    i = next_i
-                else:
-                    i += 1
-
-            return glyphs, font_height, font_ascent, font_descent
-
-        except Exception as e:
-            print(f"Ошибка при парсинге BDF файла: {e}")
-            return None, 16, 0, 0
-
     def generate_font_bitmap(self, font_path, height):
-        """Генерирует bitmap данных шрифта из BDF файла"""
-        # Проверяем тип файла по расширению
-        _, ext = os.path.splitext(font_path)
-        ext = ext.lower()
+        """Генерирует массив глифов из BDF файла"""
+        # Получаем список нужных символов
+        symbol_list = self.get_symbol_list()
 
-        if ext == '.bdf':
-            # Для BDF файлов используем парсинг
-            font_data, actual_height, font_ascent, font_descent = self.parse_bdf_font(font_path)
-            if font_data is None:
-                return None
+        # Создаем парсер и парсим шрифт
+        parser = BDFParser(font_path, symbol_list)
+        glyphs, font_height, font_width = parser.parse_font()
 
-            # Фильтруем только нужные символы
-            chars = self.get_symbol_list()
-            chars_set = set(ord(c) for c in chars)
-
-            # Создаем отфильтрованные данные шрифта
-            filtered_font_data = {}
-            for char_code, glyph_data in font_data.items():
-                if char_code in chars_set:
-                    filtered_font_data[char_code] = {
-                        'bitmap': glyph_data['bitmap'],
-                        'width': glyph_data['width'],
-                        'height': glyph_data['height'],
-                        'char': chr(char_code) if char_code < 128 else '?'
-                    }
-
-            return filtered_font_data
-        else:
-            print("Поддерживаются только BDF файлы!")
-            return None
+        return glyphs, font_height, font_width
 
     def save_to_header_file(self, font_data, font_name, height):
         """Сохраняет шрифт в C header файл"""
@@ -518,8 +496,7 @@ class FontGeneratorMenu:
             font_data = self.generate_font_bitmap(self.selected_font['path'], self.settings['height'])
             if font_data:
                 # Определяем высоту для сохранения
-                sample_glyph = next(iter(font_data.values()))
-                actual_height = sample_glyph['height'] if font_data else self.settings['height']
+                actual_height = self.settings['height']
 
                 font_name = os.path.splitext(self.selected_font['name'])[0]
                 self.save_to_header_file(font_data, font_name, actual_height)
