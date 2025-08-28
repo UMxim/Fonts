@@ -306,10 +306,10 @@ class FontGeneratorMenu:
             if 1 <= choice <= 4:
                 if choice == 4:
                     symbols = input("Введите свой набор символов: ")
-                    symbols = symbols.strip()  # Убираем только ведущие/завершающие пробелы
+                    # Не используем strip() вообще, чтобы сохранить все пробелы
                     self.settings['symbol_set'] = symbols
                     self.settings['custom_symbols'] = symbols
-                    print(f"Выбран набор: '{symbols}' (длина: {len(symbols)})")  # Для отладки
+                    print(f"Выбран набор длиной: {len(symbols)} символов")
                 else:
                     self.settings['symbol_set'] = choice
                     self.settings['custom_symbols'] = ""
@@ -371,7 +371,8 @@ class FontGeneratorMenu:
                 return list(self.settings['custom_symbols']) if self.settings['custom_symbols'] else []
         else:
             # Пользовательский набор
-            return list(self.settings['symbol_set']) if self.settings['symbol_set'] else []
+            symbols = self.settings['symbol_set']
+            return list(symbols) if symbols else []  # list() преобразует строку в список символов
         return []
 
     def generate_font_bitmap(self, font_path, height):
