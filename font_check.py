@@ -4,7 +4,8 @@ import os
 
 def parse_h_file(filename):
     """Парсит .h файл и извлекает данные шрифта"""
-    with open(filename, 'r') as f:
+    # Открываем файл с игнорированием ошибок декодирования
+    with open(filename, 'r', encoding='utf-8', errors='ignore') as f:
         content = f.read()
 
     # Извлекаем данные font_data
@@ -26,14 +27,13 @@ def parse_h_file(filename):
             raise ValueError("Не найден массив glyphs в файле")
 
     glyphs_str = glyphs_match.group(1)
-    print(f"DEBUG: glyphs_str = {repr(glyphs_str)}")  # Для отладки
 
     # Извлекаем записи glyphs - более гибкое регулярное выражение
     glyph_matches = re.findall(r'\{\s*([^,}]+?)\s*,\s*([^,}]+?)\s*,\s*([^,}]+?)\s*\}', glyphs_str)
 
     glyphs = []
     for match in glyph_matches:
-        # Очищаем значения от комментариев и лишних символов
+        # Очищаем значения от комментариев и лишних символов1
         ascii_code_str = match[0].split()[0].strip()
         width_str = match[1].split()[0].strip()
         bit_offset_str = match[2].split()[0].strip()
@@ -50,7 +50,6 @@ def parse_h_file(filename):
 
     return font_data, glyphs
 
-
 def get_bit(data, bit_index):
     """Получает значение бита по индексу из массива байтов"""
     byte_index = bit_index // 8
@@ -63,10 +62,22 @@ def get_bit(data, bit_index):
 def display_glyph(font_data, glyph):
     """Отображает символ в консоли"""
     height = font_data[0]  # Первый байт - высота
-    #font_bits = font_data[1:]  # Остальные байты - битовый поток
+    # Смещение считается от начала всего массива font_data, включая байт высоты
 
-    char_display = chr(glyph['ascii_code']) if 32 <= glyph['ascii_code'] <= 126 else f"\\x{glyph['ascii_code']:02X}"
-    print(f"Символ: {char_display} (ASCII: {glyph['ascii_code']})")
+    # Отображаем символ в кодировке cp1251
+    ascii_code = glyph['ascii_code']
+    try:
+        if 32 <= ascii_code <= 126:
+            char_display = chr(ascii_code)
+        elif 128 <= ascii_code <= 255:
+            # Для расширенных ASCII кодов отображаем как cp1251
+            char_display = bytes([ascii_code]).decode('cp1251')
+        else:
+            char_display = f"[{ascii_code}]"
+    except:
+        char_display = f"[{ascii_code}]"
+
+    print(f"Символ: {char_display} (Код: {ascii_code})")
     print(f"Размер: {glyph['width']}x{height}")
     print("Изображение:")
 
@@ -74,11 +85,10 @@ def display_glyph(font_data, glyph):
         line = ""
         for x in range(glyph['width']):
             bit_index = glyph['bit_offset'] + y * glyph['width'] + x
-            bit_value = get_bit(font_data, bit_index)
+            bit_value = get_bit(font_data, bit_index)  # Передаем весь font_data, смещение от начала
             line += "@" if bit_value == 1 else "."
         print(line)
     print()
-
 
 def list_h_files(directory="."):
     """Список всех .h файлов в директории"""

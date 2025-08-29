@@ -394,9 +394,10 @@ class FontGeneratorMenu:
             if hex_row:
                 try:
                     hex_val = int(hex_row.strip(), 16)
+                    maxbit = len(hex_row) * 4 - 1
                     # Преобразуем hex в биты (младший бит = правый пиксель)
                     for bit_pos in range(width):
-                        bit_val = (hex_val >> (7 - bit_pos)) & 1
+                        bit_val = (hex_val >> (maxbit - bit_pos)) & 1
                         bits.append(bit_val)
                 except ValueError:
                     # Если не удалось преобразовать, добавляем нули
@@ -531,7 +532,7 @@ class FontGeneratorMenu:
 
         try:
             # Исправлено: распаковка кортежа
-            glyphs, font_height, font_width = self.generate_font_bitmap(self.selected_font['path'], self.settings['height'])
+            glyphs, self.settings['height'], font_width = self.generate_font_bitmap(self.selected_font['path'], self.settings['height'])
 
             if glyphs is not None:
                 actual_height = self.settings['height']
