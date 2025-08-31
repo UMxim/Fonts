@@ -504,7 +504,7 @@ class FontGeneratorMenu:
             f.write("};\n\n")
 
             # Записываем информацию о глифах
-            f.write("static const glyphs_t glyphs_{height}[] = {{\n")
+            f.write(f"static const glyphs_t glyphs_{height}[] = {{\n")
 
             for i, glyph in enumerate(sorted_glyphs):
                 width = glyph['width']
