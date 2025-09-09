@@ -1,176 +1,231 @@
 import re
-import os
+import sys
 
+def escape_hyphen(text):
+    """Экранирует только дефис для регулярных выражений"""
+    return text.replace('-', r'\-')
 
-def parse_h_file(filename):
-    """Парсит .h файл и извлекает данные шрифта"""
-    # Открываем файл с игнорированием ошибок декодирования
-    with open(filename, 'r', encoding='utf-8', errors='ignore') as f:
-        content = f.read()
+def parse_hex_array(content, array_name):
+    """Парсит массив hex значений из C кода"""
+    escaped_name = escape_hyphen(array_name)
+    # Ищем начало массива
+    start_pattern = f'static const unsigned char {escaped_name}\\s*\\[\\s*\\]\\s*=\\s*\\{{'
+    start_match = re.search(start_pattern, content, re.DOTALL)
+    if not start_match:
+        return None
+    
+    # Находим начало данных (после открывающей скобки)
+    start_pos = start_match.end()
+    # Ищем соответствующую закрывающую скобку
+    brace_count = 1
+    pos = start_pos
+    while pos < len(content) and brace_count > 0:
+        if content[pos] == '{':
+            brace_count += 1
+        elif content[pos] == '}':
+            brace_count -= 1
+        pos += 1
+    
+    if brace_count != 0:
+        return None
+    
+    # Извлекаем данные между скобками
+    data_str = content[start_pos:pos-1]
+    # Извлекаем hex значения
+    hex_values = re.findall(r'0x[0-9A-Fa-f]{2}', data_str)
+    return [int(x, 16) for x in hex_values]
 
-    # Извлекаем данные font_data
-    font_data_match = re.search(r'static const unsigned char font_data\[\] = \{([^}]+)\}', content, re.DOTALL)
-    if not font_data_match:
-        raise ValueError("Не найден массив font_data в файле")
-
-    font_data_str = font_data_match.group(1)
-    # Извлекаем числа из массива
-    numbers = re.findall(r'0x[0-9A-Fa-f]+|\d+', font_data_str)
-    font_data = [int(num, 16) if 'x' in num else int(num) for num in numbers]
-
-    # Извлекаем данные glyphs
-    glyphs_match = re.search(r'static const struct \{[^}]+\} glyphs\[\] = \{(.+?)\};', content, re.DOTALL)
-    if not glyphs_match:
-        # Попробуем другой вариант поиска
-        glyphs_match = re.search(r'glyphs\[\] = \{(.+?)\};', content, re.DOTALL)
-        if not glyphs_match:
-            raise ValueError("Не найден массив glyphs в файле")
-
-    glyphs_str = glyphs_match.group(1)
-
-    # Извлекаем записи glyphs - более гибкое регулярное выражение
-    glyph_matches = re.findall(r'\{\s*([^,}]+?)\s*,\s*([^,}]+?)\s*,\s*([^,}]+?)\s*\}', glyphs_str)
-
+def parse_glyphs_array(content, array_name):
+    """Парсит массив глифов из C кода"""
+    escaped_name = escape_hyphen(array_name)
+    # Ищем начало массива
+    start_pattern = f'static const glyphs_t\\s+{escaped_name}\\s*\\[\\s*\\]\\s*=\\s*\\{{'
+    start_match = re.search(start_pattern, content, re.DOTALL)
+    if not start_match:
+        print(f"DEBUG: Pattern not found. Looking for pattern: {start_pattern}")
+        return None
+    
+    # Находим начало данных (после открывающей скобки)
+    start_pos = start_match.end()
+    # Ищем соответствующую закрывающую скобку
+    brace_count = 1
+    pos = start_pos
+    while pos < len(content) and brace_count > 0:
+        if content[pos] == '{':
+            brace_count += 1
+        elif content[pos] == '}':
+            brace_count -= 1
+        pos += 1
+    
+    if brace_count != 0:
+        return None
+    
+    # Извлекаем данные между скобками
+    data_str = content[start_pos:pos-1]
     glyphs = []
-    for match in glyph_matches:
-        # Очищаем значения от комментариев и лишних символов1
-        ascii_code_str = match[0].split()[0].strip()
-        width_str = match[1].split()[0].strip()
-        bit_offset_str = match[2].split()[0].strip()
-
-        ascii_code = int(ascii_code_str, 16) if 'x' in ascii_code_str.lower() else int(ascii_code_str)
-        width = int(width_str, 16) if 'x' in width_str.lower() else int(width_str)
-        bit_offset = int(bit_offset_str, 16) if 'x' in bit_offset_str.lower() else int(bit_offset_str)
-
+    
+    # Ищем все структуры { код, ширина, смещение }
+    pattern_glyph = r'\{\s*0x([0-9A-Fa-f]{2})\s*,\s*(\d+)\s*,\s*(\d+)\s*\}'
+    matches = re.findall(pattern_glyph, data_str)
+    
+    for match in matches:
+        ascii_code = int(match[0], 16)
+        width = int(match[1])
+        bit_offset = int(match[2])
         glyphs.append({
             'ascii_code': ascii_code,
             'width': width,
             'bit_offset': bit_offset
         })
+    
+    return glyphs
 
-    return font_data, glyphs
+def parse_font_descriptor(content, descriptor_name):
+    """Парсит дескриптор шрифта"""
+    escaped_name = escape_hyphen(descriptor_name)
+    # Ищем начало структуры
+    start_pattern = f'static const font_descriptor_t\\s+{escaped_name}\\s*=\\s*\\{{'
+    start_match = re.search(start_pattern, content, re.DOTALL)
+    if not start_match:
+        return None
+    
+    # Находим начало данных (после открывающей скобки)
+    start_pos = start_match.end()
+    # Ищем соответствующую закрывающую скобку
+    brace_count = 1
+    pos = start_pos
+    while pos < len(content) and brace_count > 0:
+        if content[pos] == '{':
+            brace_count += 1
+        elif content[pos] == '}':
+            brace_count -= 1
+        pos += 1
+    
+    if brace_count != 0:
+        return None
+    
+    # Извлекаем данные между скобками
+    data_str = content[start_pos:pos-1]
+    # Извлекаем значения
+    font_data_size_match = re.search(r'(\d+)\s*/\*\s*font_data_size', data_str)
+    glyphs_num_match = re.search(r'(\d+)\s*/\*\s*glyphs_num', data_str)
+    font_height_match = re.search(r'(\d+)\s*/\*\s*font_height', data_str)
+    
+    return {
+        'font_data_size': int(font_data_size_match.group(1)) if font_data_size_match else 0,
+        'glyphs_num': int(glyphs_num_match.group(1)) if glyphs_num_match else 0,
+        'font_height': int(font_height_match.group(1)) if font_height_match else 0
+    }
 
-def get_bit(data, bit_index):
+def get_bit(bitmap_data, bit_index):
     """Получает значение бита по индексу из массива байтов"""
     byte_index = bit_index // 8
     bit_position = bit_index % 8
-    if byte_index >= len(data):
+    
+    if byte_index >= len(bitmap_data):
         return 0
-    return (data[byte_index] >> bit_position) & 1
+    
+    return (bitmap_data[byte_index] >> bit_position) & 1
 
-
-def display_glyph(font_data, glyph):
-    """Отображает символ в консоли"""
-    height = font_data[0]  # Первый байт - высота
-    # Смещение считается от начала всего массива font_data, включая байт высоты
-
-    # Отображаем символ в кодировке cp1251
-    ascii_code = glyph['ascii_code']
+def visualize_glyph(font_data, glyph, height):
+    """Визуализирует глиф в консоли"""
     try:
-        if 32 <= ascii_code <= 126:
-            char_display = chr(ascii_code)
-        elif 128 <= ascii_code <= 255:
-            # Для расширенных ASCII кодов отображаем как cp1251
-            char_display = bytes([ascii_code]).decode('cp1251')
-        else:
-            char_display = f"[{ascii_code}]"
+        char_display = chr(glyph['ascii_code'])
+        if not (32 <= glyph['ascii_code'] <= 126):
+            char_display = '<?>'
     except:
-        char_display = f"[{ascii_code}]"
-
-    print(f"Символ: {char_display} (Код: {ascii_code})")
-    print(f"Размер: {glyph['width']}x{height}")
-    print("Изображение:")
-
-    for y in range(height):
+        char_display = '<?>'
+        
+    print(f"Character '{char_display}' (ASCII: {glyph['ascii_code']}, CP1251: 0x{glyph['ascii_code']:02X})")
+    print(f"Width: {glyph['width']}, Bit offset: {glyph['bit_offset']}")
+    
+    for row in range(height):
         line = ""
-        for x in range(glyph['width']):
-            bit_index = glyph['bit_offset'] + y * glyph['width'] + x
-            bit_value = get_bit(font_data, bit_index)  # Передаем весь font_data, смещение от начала
-            line += "@" if bit_value == 1 else "."
+        for col in range(glyph['width']):
+            bit_index = glyph['bit_offset'] + row * glyph['width'] + col
+            bit_value = get_bit(font_data, bit_index)
+            line += "█" if bit_value else "."
         print(line)
     print()
 
-def list_h_files(directory="."):
-    """Список всех .h файлов в директории"""
-    h_files = [f for f in os.listdir(directory) if f.endswith('.h')]
-    return h_files
-
-
 def main():
-    print("Просмотр шрифтов")
+    if len(sys.argv) != 2:
+        print("Usage: python font_check.py <font_header_file.h>")
+        return
+    
+    filename = sys.argv[1]
+    
+    try:
+        with open(filename, 'r', encoding='utf-8') as f:
+            content = f.read()
+    except FileNotFoundError:
+        print(f"Error: File '{filename}' not found")
+        return
+    except Exception as e:
+        print(f"Error reading file: {e}")
+        return
+    
+    # Извлекаем имя шрифта из имени файла
+    import os
+    font_name = os.path.splitext(os.path.basename(filename))[0]
+    if font_name.startswith('font_'):
+        font_name = font_name[5:]  # убираем 'font_'
+    
+    # Находим высоту из имени файла (последняя часть после _)
+    parts = font_name.split('_')
+    if len(parts) > 1 and parts[-1].isdigit():
+        height = int(parts[-1])
+        font_name_without_height = '_'.join(parts[:-1])
+    else:
+        height = 8  # значение по умолчанию
+        font_name_without_height = font_name
+    
+    # Имена переменных без высоты
+    font_data_var = f"font_data_{font_name_without_height}"
+    glyphs_var = f"glyphs_{font_name_without_height}"
+    descriptor_var = f"font_{font_name_without_height}"
+    
+    print(f"Parsing arrays: {font_data_var}, {glyphs_var}, {descriptor_var}")
+    
+    # Парсим данные
+    font_data = parse_hex_array(content, font_data_var)
+    glyphs = parse_glyphs_array(content, glyphs_var)
+    descriptor = parse_font_descriptor(content, descriptor_var)
+    
+    if font_data is None:
+        print(f"Error: Could not parse font data array '{font_data_var}'")
+        return
+    
+    if glyphs is None:
+        print(f"Error: Could not parse glyphs array '{glyphs_var}'")
+        return
+    
+    if descriptor is None:
+        print(f"Warning: Could not parse font descriptor '{descriptor_var}'")
+    
+    print(f"Font file: {filename}")
+    print(f"Font name: {font_name_without_height}")
+    print(f"Height: {height}")
+    print(f"Font data size: {len(font_data)} bytes")
+    print(f"Number of glyphs: {len(glyphs)}")
+    if descriptor:
+        print(f"Descriptor - Data size: {descriptor['font_data_size']}, Glyphs: {descriptor['glyphs_num']}, Height: {descriptor['font_height']}")
     print("=" * 50)
-
-    # Выбор директории
-    current_dir = "."
-
-    while True:
-        # Список .h файлов
-        h_files = list_h_files(current_dir)
-
-        if not h_files:
-            print("В текущей директории не найдено .h файлов")
-            return
-
-        print("\nДоступные файлы:")
-        for i, filename in enumerate(h_files):
-            print(f"{i + 1}. {filename}")
-        print("0. Выход")
-
-        try:
-            choice = input("\nВыберите файл (номер): ").strip()
-            if choice == "0":
-                break
-
-            choice = int(choice)
-            if 1 <= choice <= len(h_files):
-                filename = h_files[choice - 1]
-
-                try:
-                    # Парсим файл
-                    font_data, glyphs = parse_h_file(filename)
-                    print(f"\nЗагружен файл: {filename}")
-                    print(f"Высота шрифта: {font_data[0]} пикселей")
-                    print(f"Количество символов: {len(glyphs)}")
-
-                    if len(glyphs) == 0:
-                        print("WARNING: Не найдено символов!")
-                        print("Попробуйте проверить формат файла")
-
-                    while True:
-                        print("\nДоступные символы:")
-                        for i, glyph in enumerate(glyphs):
-                            char = chr(glyph['ascii_code']) if 32 <= glyph[
-                                'ascii_code'] <= 126 else f"\\x{glyph['ascii_code']:02X}"
-                            print(f"{i + 1}. {char} (ASCII {glyph['ascii_code']})")
-                        print("0. Назад к выбору файла")
-
-                        glyph_choice = input("\nВыберите символ для отображения (номер): ").strip()
-                        if glyph_choice == "0":
-                            break
-
-                        try:
-                            glyph_choice = int(glyph_choice)
-                            if 1 <= glyph_choice <= len(glyphs):
-                                display_glyph(font_data, glyphs[glyph_choice - 1])
-                                input("Нажмите Enter для продолжения...")
-                            else:
-                                print("Неверный выбор символа")
-                        except ValueError:
-                            print("Пожалуйста, введите число")
-                except Exception as e:
-                    print(f"Ошибка при чтении файла: {e}")
-                    import traceback
-                    traceback.print_exc()
-            else:
-                print("Неверный выбор файла")
-        except ValueError:
-            print("Пожалуйста, введите число")
-        except KeyboardInterrupt:
-            print("\nВыход...")
-            break
-        except Exception as e:
-            print(f"Ошибка: {e}")
-
+    
+    # Визуализируем несколько первых глифов
+    num_to_show = min(10, len(glyphs))
+    print(f"Showing first {num_to_show} glyphs:")
+    print()
+    
+    for i in range(num_to_show):
+        visualize_glyph(font_data, glyphs[i], height)
+    
+    # Показываем последние несколько глифов
+    if len(glyphs) > num_to_show:
+        print("..." )
+        print("Showing last few glyphs:")
+        for i in range(max(0, len(glyphs) - 3), len(glyphs)):
+            visualize_glyph(font_data, glyphs[i], height)
 
 if __name__ == "__main__":
     main()
