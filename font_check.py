@@ -106,17 +106,18 @@ def parse_font_descriptor(content, descriptor_name):
     
     # Извлекаем данные между скобками
     data_str = content[start_pos:pos-1]
-    # Извлекаем значения
-    font_data_size_match = re.search(r'(\d+)\s*/\*\s*font_data_size', data_str)
-    glyphs_num_match = re.search(r'(\d+)\s*/\*\s*glyphs_num', data_str)
-    font_height_match = re.search(r'(\d+)\s*/\*\s*font_height', data_str)
     
-    return {
-        'font_data_size': int(font_data_size_match.group(1)) if font_data_size_match else 0,
-        'glyphs_num': int(glyphs_num_match.group(1)) if glyphs_num_match else 0,
-        'font_height': int(font_height_match.group(1)) if font_height_match else 0
-    }
-
+    # Извлекаем все числа
+    numbers = re.findall(r'(\d+)', data_str)
+    
+    if len(numbers) >= 3:
+        return {
+            'font_data_size': int(numbers[-3]),
+            'glyphs_num': int(numbers[-2]),
+            'font_height': int(numbers[-1])
+        }
+    return None
+    
 def get_bit(bitmap_data, bit_index):
     """Получает значение бита по индексу из массива байтов"""
     byte_index = bit_index // 8
@@ -191,7 +192,7 @@ def main():
     font_data = parse_hex_array(content, font_data_var)
     glyphs = parse_glyphs_array(content, glyphs_var)
     descriptor = parse_font_descriptor(content, descriptor_var)
-    
+    height = descriptor['font_height']
     if font_data is None:
         print(f"Error: Could not parse font data array '{font_data_var}'")
         return

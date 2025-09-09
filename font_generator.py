@@ -424,15 +424,15 @@ class FontGeneratorMenu:
         valid_glyphs = [g for g in glyphs if 'cp1251_code' in g and g['cp1251_code'] >= 0]
         sorted_glyphs = sorted(valid_glyphs, key=lambda g: g['cp1251_code'])
 
-        # Создаем безопасное имя шрифта для использования в идентифаторах
-        safe_font_name = "".join(c for c in font_name if c.isalnum() or c in "._-")
+        # Создаем безопасное имя шрифта для использования в идентифаторах        
+        safe_font_name = "".join(c if c.isalnum() or c in "._" else "_" for c in font_name)
         
         # Имена переменных с именем шрифта (без высоты в имени)
         font_data_var = f"font_data_{safe_font_name}"
         glyphs_var = f"glyphs_{safe_font_name}"
         font_descriptor_var = f"font_{safe_font_name}"
         
-        filename = f"font_{safe_font_name}_{height}.h"
+        filename = f"font_{safe_font_name}.h"
         
         description = """/* Описание формата шрифта:
 
